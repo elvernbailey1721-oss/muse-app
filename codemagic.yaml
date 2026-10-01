@@ -1,0 +1,115 @@
+# Codemagic — PaintScope iOS unsigned build (no Mac, no paid Apple account needed)
+#
+# Why this file exists: an iPhone app must be compiled on a Mac. Codemagic's
+# free tier gives you 500 macOS M2 build minutes/month (no credit card), which
+# is ~25-40 PaintScope builds. This produces an UNSIGNED .ipa that you then
+# install on your iPhone from your Chromebook with a FREE Apple ID
+# (see docs/IPHONE_INSTALL.md). Free signing expires every 7 days -> re-sign
+# weekly. No push notifications / iCloud on the free path.
+#
+# PROJECT FACTS (verified against the repo — do not "fix" these blindly):
+#   - iOS project is App.xcodeproj (NOT a .xcworkspace, NO CocoaPods).
+#   - Swift dependencies come from the local CapApp-SPM package
+#     (app/ios/App/CapApp-SPM), which references the Capacitor plugins in
+#     app/node_modules, plus one remote package (capacitor-swift-pm).
+#   - There are no shared .xcschemes, so the build uses -target App
+#     (targets need no scheme). Do not switch to -scheme without adding one.
+#
+#   - iOS image assets (*.png in Assets.xcassets) are stored in the repo as
+#     base64 text (app/ios/image-assets/*.png.b64) because GitHub's API file
+#     push cannot carry binary files. CI decodes them before xcodebuild;
+#     see the "Restore iOS image assets" step below. The 3 splash PNGs were
+#     byte-identical, so one .b64 restores all three.
+#
+# SETUP (one time, ~10 minutes):
+#   1. Push this whole paintscope-mobile folder to a GitHub repo (private is fine).
+#   2. Create a free Codemagic account at https://codemagic.com/signup (no card).
+#   3. Add application -> connect your GitHub repo -> Codemagic finds this file.
+#   4. To conserve free minutes, builds run ONLY when you push a git tag like
+#      `ios-v1` (not on every commit):  git tag ios-v1 && git push origin ios-v1
+#   5. When the build finishes, download the .ipa from the build's Artifacts tab
+#      onto your Chromebook's Linux files.
+#
+# When you later pay for the $99/yr Apple Developer Program (for TestFlight,
+# push, App Store), switch this workflow to Codemagic's signed Xcode build
+# with your Apple credentials — no app-code changes needed.
+
+workflows:
+  ios-unsigned:
+    name: PaintScope iOS (unsigned)
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    environment:
+      vars:
+        XCODE_PROJECT: "ios/App/App.xcodeproj"
+        XCODE_TARGET: "App"
+      xcode: latest
+    triggering:
+      events:
+        - tag
+      tag_patterns:
+        - pattern: "ios-*"
+          include: true
+          source: true
+    scripts:
+      - name: Install app dependencies
+        script: |
+          set -e
+          cd app
+          npm ci
+      - name: Rebuild web bundle and sync to iOS
+        script: |
+          set -e
+          cd app
+          npm run build:bundle
+          npx cap sync ios
+      - name: Restore iOS image assets from embedded base64
+        script: |
+          set -e
+          cd app
+          ASSETS="ios/App/App/Assets.xcassets"
+          base64 -d -i ios/image-assets/splash.png.b64 -o "$ASSETS/Splash.imageset/splash-2732x2732.png"
+          cp "$ASSETS/Splash.imageset/splash-2732x2732.png" "$ASSETS/Splash.imageset/splash-2732x2732-1.png"
+          cp "$ASSETS/Splash.imageset/splash-2732x2732.png" "$ASSETS/Splash.imageset/splash-2732x2732-2.png"
+          base64 -d -i ios/image-assets/appicon.png.b64 -o "$ASSETS/AppIcon.appiconset/AppIcon-512@2x.png"
+          ls -la "$ASSETS/Splash.imageset/" "$ASSETS/AppIcon.appiconset/"
+      - name: Resolve Swift package dependencies
+        script: |
+          set -e
+          cd app
+          xcodebuild \
+            -resolvePackageDependencies \
+            -project "$XCODE_PROJECT" \
+            -clonedSourcePackagesDirPath "$CM_BUILD_DIR/spm-cache"
+      - name: Build unsigned .app (no code signing)
+        script: |
+          set -e
+          cd app
+          xcodebuild \
+            -project "$XCODE_PROJECT" \
+            -target "$XCODE_TARGET" \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            -derivedDataPath "$CM_BUILD_DIR/derived" \
+            -clonedSourcePackagesDirPath "$CM_BUILD_DIR/spm-cache" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+      - name: Package unsigned .ipa
+        script: |
+          set -e
+          cd app
+          APP_PATH="$CM_BUILD_DIR/derived/Build/Products/Release-iphoneos/App.app"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "ERROR: built app not found at $APP_PATH" >&2
+            find "$CM_BUILD_DIR/derived" -maxdepth 4 -type d -name "Release-iphoneos" >&2 || true
+            exit 1
+          fi
+          rm -rf Payload PaintScope-unsigned.ipa
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/
+          zip -qry PaintScope-unsigned.ipa Payload
+          ls -lh PaintScope-unsigned.ipa
+    artifacts:
+      - app/PaintScope-unsigned.ipa

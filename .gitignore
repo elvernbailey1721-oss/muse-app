@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# app/package-lock.json IS committed: Codemagic runs `npm ci`, which needs it.
+
+# Build outputs (rebuilt by CI)
+dist/
+build/
+app/www/
+derived/
+
+# Local dev databases
+*.sqlite3
+*.db
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+Thumbs.db
+
+# iOS binary image assets: stored as *.png.b64 in app/ios/image-assets/
+# (GitHub's API push cannot carry binary files); CI decodes them pre-build.
+app/ios/App/App/Assets.xcassets/AppIcon.appiconset/*.png
+app/ios/App/App/Assets.xcassets/Splash.imageset/*.png
+
+# Secrets — never commit
+.env
+.env.*
+*.pem
+*.key
+*.p8
+google-services.json
+GoogleService-Info.plist
