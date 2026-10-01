@@ -51,7 +51,6 @@ workflows:
       tag_patterns:
         - pattern: "ios-*"
           include: true
-          source: true
     scripts:
       - name: Install app dependencies
         script: |
