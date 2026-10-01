@@ -17,9 +17,10 @@
 #
 #   - iOS image assets (*.png in Assets.xcassets) are stored in the repo as
 #     base64 text (app/ios/image-assets/*.png.b64) because GitHub's API file
-#     push cannot carry binary files. CI decodes them before xcodebuild;
-#     see the "Restore iOS image assets" step below. The 3 splash PNGs were
-#     byte-identical, so one .b64 restores all three.
+#     push cannot carry binary files. The 147KB app icon is split into
+#     100KB chunks (appicon.00.b64, appicon.01.b64) to fit the API's
+#     argument size limit; CI concatenates them before decoding.
+#     The 3 splash PNGs were byte-identical, so one .b64 restores all three.
 #
 # SETUP (one time, ~10 minutes):
 #   1. Push this whole paintscope-mobile folder to a GitHub repo (private is fine).
@@ -71,7 +72,7 @@ workflows:
           base64 -d -i ios/image-assets/splash.png.b64 -o "$ASSETS/Splash.imageset/splash-2732x2732.png"
           cp "$ASSETS/Splash.imageset/splash-2732x2732.png" "$ASSETS/Splash.imageset/splash-2732x2732-1.png"
           cp "$ASSETS/Splash.imageset/splash-2732x2732.png" "$ASSETS/Splash.imageset/splash-2732x2732-2.png"
-          base64 -d -i ios/image-assets/appicon.png.b64 -o "$ASSETS/AppIcon.appiconset/AppIcon-512@2x.png"
+          cat ios/image-assets/appicon.0*.b64 | base64 -d -o "$ASSETS/AppIcon.appiconset/AppIcon-512@2x.png"
           ls -la "$ASSETS/Splash.imageset/" "$ASSETS/AppIcon.appiconset/"
       - name: Resolve Swift package dependencies
         script: |
