@@ -85,10 +85,15 @@ workflows:
         script: |
           set -e
           cd app
+          # Resolve the FULL SwiftPM graph via CapApp-SPM first. This fetches
+          # transitive remote deps of the local plugin packages (keychain-swift,
+          # ion-ios-camera) which xcodebuild -resolvePackageDependencies alone
+          # was not picking up (build failed: "unable to resolve module
+          # dependency: 'KeychainSwift'").
+          xcrun swift package --package-path ios/App/CapApp-SPM resolve
           xcodebuild \
             -resolvePackageDependencies \
-            -project "$XCODE_PROJECT" \
-            -clonedSourcePackagesDirPath "$CM_BUILD_DIR/spm-cache"
+            -project "$XCODE_PROJECT"
       - name: Build unsigned .app (no code signing)
         script: |
           set -e
@@ -107,7 +112,6 @@ workflows:
             -configuration Release \
             -sdk iphoneos \
             -destination "generic/platform=iOS" \
-            -clonedSourcePackagesDirPath "$CM_BUILD_DIR/spm-cache" \
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
