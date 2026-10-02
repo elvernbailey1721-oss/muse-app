@@ -71,6 +71,38 @@ workflows:
           tar -xzf www.tar.gz
           npm run build:web
           npx cap sync ios
+      - name: Inject transitive SwiftPM deps into CapApp-SPM
+        script: |
+          set -e
+          cd app
+          # npx cap sync regenerates ios/App/CapApp-SPM/Package.swift, and
+          # xcodebuild does not fetch TRANSITIVE remote deps of the local
+          # path-based plugin packages (build failed with "unable to resolve
+          # module dependency: 'KeychainSwift'"). Promote them to direct
+          # dependencies of CapApp-SPM so they are always resolved.
+          python3 - <<'PYEOF'
+          path = "ios/App/CapApp-SPM/Package.swift"
+          with open(path) as f:
+              c = f.read()
+          if "keychain-swift.git" not in c:
+              old = '.package(url: "https://github.com/ionic-team/capacitor-swift-pm.git", exact: "8.5.2"),'
+              new = (old +
+                     '\n        .package(url: "https://github.com/evgenyneu/keychain-swift.git", from: "21.0.0"),' +
+                     '\n        .package(url: "https://github.com/ionic-team/ion-ios-camera.git", .upToNextMinor(from: "2.0.0")),')
+              assert old in c, "capacitor-swift-pm pin not found in Package.swift"
+              c = c.replace(old, new)
+              oldp = '.product(name: "Cordova", package: "capacitor-swift-pm"),'
+              newp = (oldp +
+                      '\n                .product(name: "KeychainSwift", package: "keychain-swift"),' +
+                      '\n                .product(name: "IONCameraLib", package: "ion-ios-camera"),')
+              assert oldp in c, "Cordova product not found in Package.swift"
+              c = c.replace(oldp, newp)
+              with open(path, "w") as f:
+                  f.write(c)
+              print("Injected keychain-swift + ion-ios-camera into CapApp-SPM")
+          else:
+              print("Transitive deps already present, skipping")
+          PYEOF
       - name: Restore iOS image assets from embedded base64
         script: |
           set -e
@@ -85,12 +117,6 @@ workflows:
         script: |
           set -e
           cd app
-          # Resolve the FULL SwiftPM graph via CapApp-SPM first. This fetches
-          # transitive remote deps of the local plugin packages (keychain-swift,
-          # ion-ios-camera) which xcodebuild -resolvePackageDependencies alone
-          # was not picking up (build failed: "unable to resolve module
-          # dependency: 'KeychainSwift'").
-          xcrun swift package --package-path ios/App/CapApp-SPM resolve
           xcodebuild \
             -resolvePackageDependencies \
             -project "$XCODE_PROJECT"
