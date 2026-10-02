@@ -57,11 +57,19 @@ workflows:
           set -e
           cd app
           npm ci
-      - name: Rebuild web bundle and sync to iOS
+      - name: Restore prebuilt web assets and sync to iOS
         script: |
           set -e
           cd app
-          npm run build:bundle
+          # www/ (index.html + 24MB media) is committed as a single binary
+          # tarball (GitHub's file API can't carry binary, so Elvern uploads
+          # www.tar.gz via the github.com web UI). Fail loudly if missing.
+          if [ ! -f www.tar.gz ]; then
+            echo "ERROR: app/www.tar.gz missing — upload it via github.com (Add file > Upload files in app/)" >&2
+            exit 1
+          fi
+          tar -xzf www.tar.gz
+          npm run build:web
           npx cap sync ios
       - name: Restore iOS image assets from embedded base64
         script: |
