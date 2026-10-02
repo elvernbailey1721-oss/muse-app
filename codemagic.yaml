@@ -91,8 +91,8 @@ workflows:
             -clonedSourcePackagesDirPath "$CM_BUILD_DIR/spm-cache"
       - name: Build unsigned .app (no code signing)
         script: |
-          set -e
           cd app
+          set +e
           xcodebuild \
             -project "$XCODE_PROJECT" \
             -target "$XCODE_TARGET" \
@@ -104,7 +104,14 @@ workflows:
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
-            build
+            build > xcodebuild.log 2>&1
+          CODE=$?
+          echo "=== xcodebuild exit code: $CODE ==="
+          echo "=== lines mentioning error/failed ==="
+          grep -iE "error:|failed" xcodebuild.log | head -25 || true
+          echo "=== last 30 log lines ==="
+          tail -30 xcodebuild.log
+          exit $CODE
       # NOTE: -target is used (not -scheme) because the project ships no
       # shared .xcschemes. -derivedDataPath is intentionally omitted:
       # xcodebuild requires -scheme when -derivedDataPath is specified.
@@ -125,3 +132,4 @@ workflows:
           ls -lh PaintScope-unsigned.ipa
     artifacts:
       - app/PaintScope-unsigned.ipa
+      - app/xcodebuild.log
