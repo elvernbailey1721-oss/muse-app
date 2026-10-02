@@ -99,21 +99,23 @@ workflows:
             -configuration Release \
             -sdk iphoneos \
             -destination "generic/platform=iOS" \
-            -derivedDataPath "$CM_BUILD_DIR/derived" \
             -clonedSourcePackagesDirPath "$CM_BUILD_DIR/spm-cache" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             build
+      # NOTE: -target is used (not -scheme) because the project ships no
+      # shared .xcschemes. -derivedDataPath is intentionally omitted:
+      # xcodebuild requires -scheme when -derivedDataPath is specified.
       - name: Package unsigned .ipa
         script: |
           set -e
           cd app
-          APP_PATH="$CM_BUILD_DIR/derived/Build/Products/Release-iphoneos/App.app"
-          if [ ! -d "$APP_PATH" ]; then
-            echo "ERROR: built app not found at $APP_PATH" >&2
-            find "$CM_BUILD_DIR/derived" -maxdepth 4 -type d -name "Release-iphoneos" >&2 || true
+          APP_PATH="$(find ~/Library/Developer/Xcode/DerivedData -maxdepth 5 -type d -name "App.app" -path "*Release-iphoneos*" 2>/dev/null | head -1)"
+          if [ -z "$APP_PATH" ] || [ ! -d "$APP_PATH" ]; then
+            echo "ERROR: built App.app not found under Xcode DerivedData" >&2
             exit 1
           fi
+          echo "Found: $APP_PATH"
           rm -rf Payload PaintScope-unsigned.ipa
           mkdir -p Payload
           cp -R "$APP_PATH" Payload/
