@@ -1,0 +1,151 @@
+# PaintScope iOS unsigned build (GitHub Actions)
+#
+# Builds the unsigned .ipa on a GitHub-hosted macOS runner. This workflow is
+# the automated iteration loop: every push to main re-runs the build, so fixes
+# can be pushed and verified without manual steps.
+#
+# Mirrors codemagic.yaml. The .ipa is uploaded as an artifact on success;
+# the xcodebuild log is uploaded on failure for diagnosis.
+
+name: PaintScope iOS (unsigned)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - '.github/workflows/ios-unsigned.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    env:
+      XCODE_PROJECT: ios/App/App.xcodeproj
+      XCODE_TARGET: App
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install app dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: Restore prebuilt web assets and sync to iOS
+        working-directory: app
+        run: |
+          set -e
+          if [ ! -f www.tar.gz ]; then
+            echo "ERROR: app/www.tar.gz missing" >&2
+            exit 1
+          fi
+          tar -xzf www.tar.gz
+          npm run build:web
+          npx cap sync ios
+
+      - name: Inject transitive SwiftPM deps into CapApp-SPM
+        working-directory: app
+        run: |
+          set -e
+          python3 - <<'PYEOF'
+          path = "ios/App/CapApp-SPM/Package.swift"
+          with open(path) as f:
+              c = f.read()
+          if "keychain-swift.git" not in c:
+              old = '.package(url: "https://github.com/ionic-team/capacitor-swift-pm.git", exact: "8.5.2"),'
+              new = (old +
+                     '\n        .package(url: "https://github.com/evgenyneu/keychain-swift.git", from: "21.0.0"),' +
+                     '\n        .package(url: "https://github.com/ionic-team/ion-ios-camera.git", .upToNextMinor(from: "2.0.0")),')
+              assert old in c, "capacitor-swift-pm pin not found in Package.swift"
+              c = c.replace(old, new)
+              oldp = '.product(name: "Cordova", package: "capacitor-swift-pm"),'
+              newp = (oldp +
+                      '\n                .product(name: "KeychainSwift", package: "keychain-swift"),' +
+                      '\n                .product(name: "IONCameraLib", package: "ion-ios-camera"),')
+              assert oldp in c, "Cordova product not found in Package.swift"
+              c = c.replace(oldp, newp)
+              with open(path, "w") as f:
+                  f.write(c)
+              print("Injected keychain-swift + ion-ios-camera into CapApp-SPM")
+          else:
+              print("Transitive deps already present, skipping")
+          PYEOF
+
+      - name: Restore iOS image assets from embedded base64
+        working-directory: app
+        run: |
+          set -e
+          ASSETS="ios/App/App/Assets.xcassets"
+          base64 -d -i ios/image-assets/splash.png.b64 -o "$ASSETS/Splash.imageset/splash-2732x2732.png"
+          cp "$ASSETS/Splash.imageset/splash-2732x2732.png" "$ASSETS/Splash.imageset/splash-2732x2732-1.png"
+          cp "$ASSETS/Splash.imageset/splash-2732x2732.png" "$ASSETS/Splash.imageset/splash-2732x2732-2.png"
+          cat ios/image-assets/appicon.0*.b64 | base64 -d -o "$ASSETS/AppIcon.appiconset/AppIcon-512@2x.png"
+          ls -la "$ASSETS/Splash.imageset/" "$ASSETS/AppIcon.appiconset/"
+
+      - name: Resolve Swift package dependencies
+        working-directory: app
+        run: |
+          set -e
+          xcodebuild -resolvePackageDependencies -project "$XCODE_PROJECT"
+
+      - name: Build unsigned .app (no code signing)
+        working-directory: app
+        run: |
+          set +e
+          xcodebuild \
+            -project "$XCODE_PROJECT" \
+            -target "$XCODE_TARGET" \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build > xcodebuild.log 2>&1
+          CODE=$?
+          echo "=== xcodebuild exit code: $CODE ==="
+          echo "=== lines mentioning error/failed ==="
+          grep -iE "error:|failed" xcodebuild.log | head -25 || true
+          echo "=== last 30 log lines ==="
+          tail -30 xcodebuild.log
+          exit $CODE
+
+      - name: Package unsigned .ipa
+        if: success()
+        working-directory: app
+        run: |
+          set -e
+          APP_PATH="$(find ~/Library/Developer/Xcode/DerivedData -maxdepth 5 -type d -name "App.app" -path "*Release-iphoneos*" 2>/dev/null | head -1)"
+          if [ -z "$APP_PATH" ] || [ ! -d "$APP_PATH" ]; then
+            echo "ERROR: built App.app not found under Xcode DerivedData" >&2
+            exit 1
+          fi
+          echo "Found: $APP_PATH"
+          rm -rf Payload PaintScope-unsigned.ipa
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/
+          zip -qry PaintScope-unsigned.ipa Payload
+          ls -lh PaintScope-unsigned.ipa
+
+      - name: Upload .ipa artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PaintScope-unsigned
+          path: app/PaintScope-unsigned.ipa
+
+      - name: Upload xcodebuild log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: app/xcodebuild.log
