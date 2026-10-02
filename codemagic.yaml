@@ -91,7 +91,15 @@ workflows:
             -clonedSourcePackagesDirPath "$CM_BUILD_DIR/spm-cache"
       - name: Build unsigned .app (no code signing)
         script: |
+          set -e
           cd app
+          echo "=== working directory ==="
+          pwd
+          ls
+          echo "=== xcodebuild version ==="
+          xcodebuild -version
+          echo "=== project targets and schemes ==="
+          xcodebuild -list -project "$XCODE_PROJECT"
           set +e
           xcodebuild \
             -project "$XCODE_PROJECT" \
